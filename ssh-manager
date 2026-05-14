@@ -1,0 +1,379 @@
+#!/bin/bash
+set -e
+
+# Size of the "hostname" column in fzf (used for alignment)
+MAXNAMELENGHT=14
+PING_TIMEOUT=1
+
+# Uncomment the following line to limit the number of concurent processes
+# MAXJOB=100
+
+# Uncomment to disable permanently modern unicode caracters:
+# NO_UNICODE=1
+
+function usage() {
+    cat << EOF
+Usage:
+    $(basename $0) [-h] [-d] [HOSTNAME]
+
+Where:
+    -f  : config file (instead of ~/.ssh/ssh_config)
+    -t  : text mode, do not use unicode
+    -h  : display this help message
+    -d  : debug mode, do not launch fzf but print its input
+    -c  : same as "-d" but use a column format (wide output needed)
+
+Example:
+    # Display the menu:
+    $(basename $0)
+
+    # Use an alternate config file
+    $(basename $0) -f ./example/ssh_config
+
+    # SSH wrapper: if the server is unreachable, start it and wait for boot
+    # completion before calling ssh
+    $(basename $0) nodename
+
+EOF
+}
+
+while getopts "[htdcf:]" opt; do
+    case $opt in
+        f)
+			FILE="${OPTARG}"
+            ;;
+        d)
+            DEBUG=1
+            ;;
+        h)
+            usage
+            exit 0
+            ;;
+        t)
+            NO_UNICODE=1
+            ;;
+        c)
+            COLUMN=1
+            DEBUG=1
+            ;;
+        \?)
+            usage 1>&2
+            exit 1
+    esac
+done
+shift $((OPTIND-1))
+
+
+if [ -n "$NO_UNICODE" ]; then
+    MAXICONL=13
+
+    ICON_UP="O"
+    ICON_DOWN="I"
+    ICON_UNKNOWN="?"
+    ICON_DOCKER="[DOCK]"
+    ICON_PODMAN="[PODM]"
+    ICON_INCUS="[INCUS]"
+    ICON_K8S="[K8S]"
+    ICON_NSPAWN="[NSPA]"
+    ICON_LXD="[LXD]"
+    ICON_LIBVIRT="[LVIR]"
+    ICON_WOL="[WOL]"
+    ICON_CMD="[CMD]"
+    ICON_HOST="[HOST]"
+    ICON_PROX="[PROX]"
+    ICON_IPMI="[IPMI]"
+    ICON_REDFISH="[RFISH]"
+    ICON_NOPROX="      "
+else
+    MAXICONL='' # doesn't work (printf + unicode lenght)
+
+    ICON_UP="🟢"
+    ICON_DOWN="🔴"
+    ICON_UNKNOWN="❓"
+    ICON_DOCKER="🐳"
+    ICON_PODMAN="🦭"
+    ICON_INCUS="🦴"
+    ICON_K8S="☸️"
+    ICON_NSPAWN="📦"
+    ICON_LXD="📦"
+    ICON_LIBVIRT="✨"
+    ICON_WOL="⚡"
+    ICON_CMD="⚙️"
+    ICON_HOST="🖥️"
+    ICON_PROX="🔁"
+    ICON_IPMI="🌐"
+    ICON_REDFISH="🐠"
+    ICON_NOPROX="  "
+fi
+
+if [ -n "$FILE" ]; then
+    SSHCFG="$FILE"
+    SSHOPT="-F $FILE"
+else
+    SSHCFG="$HOME/.ssh/config"
+fi
+
+#
+# Function definition
+#
+
+function mySSH() {
+    ssh $SSHOPT -n -o PasswordAuthentication=no -o ConnectTimeout=$PING_TIMEOUT $*
+}
+
+function get_status() {
+    host="$1"; hname="$2"; wake="$3"; proxy="$4"; desc="$5"; noping="$6"
+
+    if [ -z "$hname" ]; then
+        hname="$host"
+    fi
+
+    icon="$ICON_HOST"
+    icon_power="$ICON_UNKNOWN"
+
+
+    if [ -n "$wake" ]; then
+        read method other <<< "$wake"
+
+        if [ "$method" = 'wol' ]; then
+            icon="${ICON_WOL}"
+        elif [ "$method" = 'ipmi' ]; then
+            icon="${ICON_IPMI}"
+        elif [ "$method" = 'redfish' ]; then
+            icon="${ICON_REDFISH}"
+        elif [ "$method" = 'docker' ]; then
+            icon="${ICON_DOCKER}"
+        elif [ "$method" = 'incus' ]; then
+            icon="${ICON_INCUS}"
+        elif [ "$method" = 'nspawn' ]; then
+            icon="${ICON_NSPAWN}"
+        elif [ "$method" = 'k8s' ]; then
+            icon="${ICON_K8S}"
+        elif [ "$method" = 'podman' ]; then
+            icon="${ICON_PODMAN}"
+        elif [ "$method" = 'lxd' ]; then
+            icon="${ICON_LXD}"
+        elif [ "$method" = 'libvirt' ]; then
+            icon="${ICON_LIBVIRT}"
+        elif [ "$method" = 'exec' ]; then
+            icon="${ICON_CMD}"
+        else
+            icon="${ICON_UNKNOWN}"
+        fi
+
+    fi
+
+    status="UNKNOWN"
+    if [ -z "$proxy" ]; then
+        # proxy not set
+        if [ -z "$noping" ]; then
+            if ping -q -W "$PING_TIMEOUT" -c 1 "$hname" >/dev/null 2>&1; then
+                status="UP"
+                icon_power="$ICON_UP"
+            else
+                status="DOWN"
+                icon_power="$ICON_DOWN"
+            fi
+        fi
+        iprox="${ICON_NOPROX}"
+    else
+        # NOTE: Assume ProxyCommand looks like "ssh -W %h:%p proxy"
+        #      with "proxy" configured in config file with
+        #      passwordless authentication (key, agent or
+        #      active master connection)
+
+        if [ -z "$noping" ]; then
+            pname="${proxy##* }"
+            if mySSH "$pname" ping -q -W "$PING_TIMEOUT" -c 1 "$hname" >/dev/null 2>&1;
+            then
+                status="UP"
+                icon_power="$ICON_UP"
+            else
+                status="DOWN"
+                icon_power="$ICON_DOWN"
+            fi
+        fi
+        iprox="$ICON_PROX"
+    fi
+
+    printf "%s;%-${MAXNAMELENGHT}s %-${MAXICONL}s %s;%s;%s;%s;%s;%s;\n" \
+            "${icon_power}" "$host" "$icon$iprox" "$desc" \
+            "$host" "$hname" "$wake" "$status" "$proxy"
+}
+
+
+function parse_config() {
+    host="$1"
+
+    while read -r key val ; do
+        # echo "'$key' '$val'"
+        if [ -n "$key" ]; then
+            if [ "$key" == 'Host' ]; then
+                if [ -n "$H" ]; then
+                    if [ -z "$1" -o "$1" = "$H" ]; then
+                        get_status "$H" "$HNAME" "$WAKE" "$PROXY" "$DESC" "$NOPING" &
+
+                        if [ -z "$NOPING" -a -n "$MAXJOB" ]; then
+                            joblist=($(jobs -p))
+                            while [ ${#joblist[@]} -ge $MAXJOB ]; do
+                                sleep 0.01
+                                joblist=($(jobs -p))
+                            done
+                        fi
+                    fi
+
+                    unset NOPING
+                    unset HNAME
+                    unset PROXY
+                    unset STATUS
+                    unset WAKE
+                    unset DESC
+
+                    if [ -n "$1" -a "$1" = "$H" ]; then
+                        return 0
+                    fi
+                fi
+                H="$val"
+            elif [ "$key" == 'Hostname' ]; then
+                HNAME="$val"
+            elif [ "$key" == 'ProxyCommand' ]; then
+                PROXY="$val"
+            elif [ "$key" == '#WAKE' ]; then
+                WAKE="$val"
+            elif [ "$key" == '#DESC' ]; then
+                DESC="$val"
+            elif [ "$key" == '#NOPING' ]; then
+                NOPING="1"
+            elif [ "$key" == '#HIDE' ]; then
+                unset H
+                unset HNAME
+                unset PROXY
+                unset STATUS
+                unset WAKE
+                unset DESC
+                unset NOPING
+            fi
+        fi
+    done < "$SSHCFG"
+
+    if [ -n "$H" ]; then
+        get_status "$H" "$HNAME" "$WAKE" "$PROXY" "$DESC" "$NOPING"
+    fi
+
+}
+
+function select_host() {
+    if [ -z "$1" ]; then
+        fzf  \
+        --delimiter=';' --with-nth="{1} {2}" \
+        --accept-nth='3,4,5,6,7'\
+        --input-border \
+        --input-label='[ SSH Session Manager ]'\
+        --input-label-pos='3:bottom'\
+        --border=rounded < <(parse_config)
+    else
+        parse_config "$1"|
+        awk -F';' -v host="$1" \
+            '$3 == host { print $3 ";" $4 ";" $5 ";" $6 ";" $7; exit }'
+    fi
+}
+
+function wol() {
+    hostname="$1"
+    proxy="$2"
+    method="$3" # for instance, only wakeonlan
+    timeout="$4"
+    shift 4
+
+    if [ -z "$proxy" ]; then
+        # proxy not set
+        ping -q -W "$PING_TIMEOUT" -c 1 "$hostname" >/dev/null 2>&1 && return 0
+
+    else
+        pname="${proxy##* }"
+        mySSH "$pname" ping -q -W "$PING_TIMEOUT" -c 1 "$hname" >/dev/null 2>&1 && return 0
+    fi
+
+    echo "Powering UP $hostname"
+
+    stty sane
+    echo "+ $*" >&2
+    $*
+
+    # wait until ping ok
+    if [ -z "$proxy" ]; then
+        SECONDS=0
+        while [ "$SECONDS" -lt "$timeout" ]; do
+            sleep 1 & # avoid flooding if dynamic dns
+            printf "\rPing $SECONDS/$timeout"
+            ping -q -c 1 -w 1 $hostname >/dev/null 2>&1 && break
+            wait
+        done
+        echo "\nOK"
+
+        # wait for ssh
+        while [ "$SECONDS" -lt "$timeout" ]; do
+            sleep 1 &
+            printf "\rWait SSH $SECONDS/$timeout"
+            ssh-keyscan -T 1 "$hostname" >/dev/null 2>&1 && echo OK && return 0
+            wait
+        done
+
+    else
+        pname="${proxy##* }"
+        ssh $SSHOPT "$pname" bash -s <<EOF
+        exec 2>/dev/null
+        SECONDS=0
+        while [ "\$SECONDS" -lt "$timeout" ]; do
+            sleep 1 & # avoid flooding if dynamic dns
+            printf "\\rPing \$SECONDS/$timeout"
+            ping -q -c 1 -w 1 $hostname >/dev/null 2>&1 && break
+            wait
+        done
+        echo
+        echo "OK"
+
+        # wait for ssh
+        while [ "\$SECONDS" -lt "$timeout" ]; do
+            sleep 1 &
+            printf "\\rWait SSH \$SECONDS/$timeout"
+            ssh-keyscan -T 1 "$hostname" >/dev/null 2>&1 && echo && echo "OK" && exit 0
+            wait
+        done
+        exit 0
+EOF
+    fi
+}
+
+#
+# "main()"
+#
+
+if [ -z "$DEBUG" ]; then
+    host="$1"
+
+    # select_host with fzf
+    IFS=';' read host hostname wol status proxy <<< $(select_host $host)
+    if [ -z "$host" -a -n "$1" ]; then
+        host="$1"
+    fi
+
+    if [ -n "$host" ]; then
+        if [ "$status" = "DOWN" -a -n "$wol" ]; then
+            wol "$hostname" "$proxy" $wol
+        fi
+
+        stty sane
+        echo "+ ssh -tt \"$host\"" >&2
+        ssh -tt $SSHOPT "$host"
+    fi
+
+else
+    if [ -z "$COLUMN" ]; then
+        parse_config
+    else
+        parse_config | column -t -s';' -o ' ; '
+    fi
+    wait
+fi
+

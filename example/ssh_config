@@ -1,0 +1,93 @@
+ForwardAgent yes
+
+Host myServer
+
+Host myProxy
+    Hostname localhost
+
+
+Host behindProxy
+    Hostname test
+    #DESC This server is behind a proxy (see ProxyCommand in `man ssh_config`)
+    ProxyCommand ssh -W %h:%p myProxy
+
+Host ipv6Host
+    Hostname fd68:df2a:8351:2::2000
+    #DESC OpenSSH works with both IP v4 & v6
+
+Host ipmiHost
+    Hostname 10.0.0.12
+    #DESC This host is automaticaly started using ipmi
+    #WAKE ipmi 90 ipmitool -I lanplus -U "myadmin" -P "BYSECRET" -H <bmcAddr> chassis power on
+
+Host nopingHost
+    Hostname localhost
+    #DESC Should be in "UNKNOWN STATE (NOPING flag)"
+    #NOPING
+
+Host foo
+    Hostname localhost
+    #DESC Should not appear in the list (HIDE flag)
+    #HIDE
+
+Host ubuntu-26.04
+    Hostname ubuntu-26.04
+    #DESC Ubuntu-26.04 container (nspawn)
+    #WAKE nspawn 90 ssh dockerHost sudo machinectl start ubuntu-26.04
+
+Host gentoo-build
+    Hostname 10.84.32.106
+    #DESC Gentoo container (incus)
+    #WAKE incus 90 ssh -tt myServer sudo incus start gentoo-build
+    User build
+    ProxyCommand ssh -W %h:%p myServer
+
+Host gentoo
+    Hostname gentoo
+    #DESC Gentoo container (docker)
+    #WAKE docker 90 ssh -tt dockerHost sudo machinectl start ubuntu-26.04
+
+Host foo
+    Hostname foo.home.arpa
+    #DESC Should raise a DNS error
+
+Host slowHost
+    Hostname 10.0.12.24
+    #DESC Should raise a timeout
+
+Host n1
+    #DESC Docker container
+    #WAKE docker
+
+Host n2
+    #DESC Podman container
+    #WAKE podman
+
+Host n3
+    #DESC K8s container
+    #WAKE k8s
+
+Host n4
+    #DESC LXD container
+    #WAKE lxd
+
+Host n5
+    #DESC Libvirt VM
+    #WAKE libvirt
+
+Host n6
+    #DESC Can be started with wakeonlan
+    #WAKE wol 90 wakeonlan -i 10.1.12.255 aa:bb:c1:12:a5:7b
+
+Host n7
+    #DESC Automaticaly started using ipmi
+    #WAKE ipmi 90 ipmitool -I lanplus -U "myadmin" -P "BYSECRET" -H <bmcAddr> chassis power on
+
+Host n8
+    #DESC Docker container
+    #WAKE redfish
+
+Host n9
+    #DESC Can be started with any custom command
+    #WAKE exec
+
